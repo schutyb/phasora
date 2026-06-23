@@ -19,6 +19,7 @@ from PySide6.QtWidgets import (
 
 from phasora.core.io import load_tiff
 from phasora.core.phasor import compute_phasor
+from phasora.core.selection import circular_phasor_mask
 
 
 pg.setConfigOptions(imageAxisOrder="row-major")
@@ -240,13 +241,13 @@ class MainWindow(QMainWindow):
             & np.isfinite(self.s)
         )
 
-        distance_squared = (
-            (self.g - center_g) ** 2
-            + (self.s - center_s) ** 2
-        )
-
-        mask = valid & (
-            distance_squared <= radius**2
+        mask = circular_phasor_mask(
+            g=self.g,
+            s=self.s,
+            center_g=center_g,
+            center_s=center_s,
+            radius=radius,
+            valid_mask=valid,
         )
 
         overlay = np.zeros(
