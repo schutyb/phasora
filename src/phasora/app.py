@@ -9,6 +9,7 @@ from PySide6.QtCore import QRectF
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
+    QHBoxLayout,
     QLabel,
     QMainWindow,
     QMessageBox,
@@ -26,6 +27,8 @@ pg.setConfigOptions(imageAxisOrder="row-major")
 
 
 class MainWindow(QMainWindow):
+    MAX_SELECTIONS = 10
+
     def __init__(self) -> None:
         super().__init__()
 
@@ -34,12 +37,44 @@ class MainWindow(QMainWindow):
         self.g: np.ndarray | None = None
         self.s: np.ndarray | None = None
 
+        self.selection_colors = [
+            (255, 80, 80, 150),    # red
+            (80, 180, 255, 150),   # blue
+            (100, 220, 120, 150),  # green
+            (255, 200, 70, 150),   # yellow
+            (200, 100, 255, 150),  # purple
+            (255, 140, 60, 150),   # orange
+            (80, 220, 220, 150),   # cyan
+            (255, 100, 180, 150),  # pink
+            (170, 220, 70, 150),   # lime
+            (160, 120, 80, 150),   # brown
+        ]
+
+        self.phasor_rois: list[pg.CircleROI] = []
+
         self.setWindowTitle("Phasora")
         self.resize(1450, 850)
 
         self.open_button = QPushButton("Open TIFF")
         self.open_button.setMinimumHeight(42)
         self.open_button.clicked.connect(self.open_tiff)
+
+        self.add_selection_button = QPushButton("Add selection")
+        self.add_selection_button.setMinimumHeight(42)
+        self.add_selection_button.setEnabled(False)
+        self.add_selection_button.clicked.connect(self.add_selection)
+
+        self.remove_selection_button = QPushButton("Remove last selection")
+        self.remove_selection_button.setMinimumHeight(42)
+        self.remove_selection_button.setEnabled(False)
+        self.remove_selection_button.clicked.connect(
+            self.remove_last_selection
+        )
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(self.open_button)
+        button_layout.addWidget(self.add_selection_button)
+        button_layout.addWidget(self.remove_selection_button)
 
         self.status_label = QLabel(
             "Open a preprocessed multichannel TIFF image."
@@ -80,22 +115,8 @@ class MainWindow(QMainWindow):
         self.phasor_image_item = pg.ImageItem()
         self.phasor_plot.addItem(self.phasor_image_item)
 
-        # Interactive circular selection
-        self.phasor_roi = pg.CircleROI(
-            pos=(-0.1, -0.1),
-            size=(0.2, 0.2),
-            movable=True,
-            resizable=True,
-            pen=pg.mkPen(width=2),
-        )
-        self.phasor_roi.setVisible(False)
-        self.phasor_roi.sigRegionChanged.connect(
-            self.update_selection
-        )
-        self.phasor_plot.addItem(self.phasor_roi)
-
         layout = QVBoxLayout()
-        layout.addWidget(self.open_button)
+        layout.addLayout(button_layout)
         layout.addWidget(self.status_label)
         layout.addWidget(self.graphics, stretch=1)
 
@@ -134,8 +155,83 @@ class MainWindow(QMainWindow):
         self.update_dc_view()
         self.update_phasor_view()
 
-        self.phasor_roi.setVisible(True)
+        self.clear_selections()
+        self.add_selection()
+
+    def add_selection(self) -> None:
+        if self.g is None or self.s is None:
+            return
+
+        if len(self.phasor_rois) >= self.MAX_SELECTIONS:
+            QMessageBox.information(
+                self,
+                "Selection limit",
+                f"A maximum of {self.MAX_SELECTIONS} selections is allowed.",
+            )
+            return
+
+        selection_index = len(self.phasor_rois)
+        color = self.selection_colors[selection_index]
+
+        offset = 0.04 * selection_index
+
+        roi = pg.CircleROI(
+            pos=(-0.1 + offset, -0.1 + offset),
+            size=(0.2, 0.2),
+            movable=True,
+            resizable=True,
+            pen=pg.mkPen(
+                color=color[:3],
+                width=2,
+            ),
+        )
+
+        roi.sigRegionChanged.connect(self.update_selection)
+
+        self.phasor_plot.addItem(roi)
+        self.phasor_rois.append(roi)
+
+        self.remove_selection_button.setEnabled(True)
+        self.add_selection_button.setEnabled(
+            len(self.phasor_rois) < self.MAX_SELECTIONS
+        )
+
         self.update_selection()
+
+    def remove_last_selection(self) -> None:
+        if not self.phasor_rois:
+            return
+
+        roi = self.phasor_rois.pop()
+        self.phasor_plot.removeItem(roi)
+
+        self.remove_selection_button.setEnabled(
+            len(self.phasor_rois) > 0
+        )
+        self.add_selection_button.setEnabled(True)
+
+        self.update_selection()
+
+    def clear_selections(self) -> None:
+        for roi in self.phasor_rois:
+            self.phasor_plot.removeItem(roi)
+
+        self.phasor_rois.clear()
+
+        self.remove_selection_button.setEnabled(False)
+        self.add_selection_button.setEnabled(
+            self.g is not None and self.s is not None
+        )
+
+        if self.dc is not None:
+            empty_overlay = np.zeros(
+                (*self.dc.shape, 4),
+                dtype=np.uint8,
+            )
+            self.overlay_item.setImage(
+                empty_overlay,
+                autoLevels=False,
+            )
 
     def update_dc_view(self) -> None:
         if self.dc is None:
@@ -222,58 +318,72 @@ class MainWindow(QMainWindow):
         if self.dc is None or self.g is None or self.s is None:
             return
 
-        roi_position = self.phasor_roi.pos()
-        roi_size = self.phasor_roi.size()
-
-        center_g = float(
-            roi_position.x() + roi_size.x() / 2.0
-        )
-        center_s = float(
-            roi_position.y() + roi_size.y() / 2.0
-        )
-        radius = float(
-            min(roi_size.x(), roi_size.y()) / 2.0
-        )
-
         valid = (
             (self.dc > 0)
             & np.isfinite(self.g)
             & np.isfinite(self.s)
         )
 
-        mask = circular_phasor_mask(
-            g=self.g,
-            s=self.s,
-            center_g=center_g,
-            center_s=center_s,
-            radius=radius,
-            valid_mask=valid,
-        )
-
         overlay = np.zeros(
-            (*mask.shape, 4),
+            (*self.dc.shape, 4),
             dtype=np.uint8,
         )
 
-        overlay[mask, 0] = 255
-        overlay[mask, 1] = 80
-        overlay[mask, 2] = 80
-        overlay[mask, 3] = 150
+        selection_summaries: list[str] = []
+
+        for index, roi in enumerate(self.phasor_rois):
+            roi_position = roi.pos()
+            roi_size = roi.size()
+
+            center_g = float(
+                roi_position.x() + roi_size.x() / 2.0
+            )
+            center_s = float(
+                roi_position.y() + roi_size.y() / 2.0
+            )
+            radius = float(
+                min(roi_size.x(), roi_size.y()) / 2.0
+            )
+
+            mask = circular_phasor_mask(
+                g=self.g,
+                s=self.s,
+                center_g=center_g,
+                center_s=center_s,
+                radius=radius,
+                valid_mask=valid,
+            )
+
+            color = self.selection_colors[index]
+
+            overlay[mask, 0] = color[0]
+            overlay[mask, 1] = color[1]
+            overlay[mask, 2] = color[2]
+            overlay[mask, 3] = color[3]
+
+            selected_pixels = int(np.count_nonzero(mask))
+            valid_pixels = int(np.count_nonzero(valid))
+
+            if valid_pixels > 0:
+                selected_percentage = (
+                    100.0 * selected_pixels / valid_pixels
+                )
+            else:
+                selected_percentage = 0.0
+
+            selection_summaries.append(
+                f"S{index + 1}: "
+                f"g={center_g:.3f}, "
+                f"s={center_s:.3f}, "
+                f"r={radius:.3f}, "
+                f"{selected_pixels:,} px "
+                f"({selected_percentage:.2f}%)"
+            )
 
         self.overlay_item.setImage(
             overlay,
             autoLevels=False,
         )
-
-        selected_pixels = int(np.count_nonzero(mask))
-        valid_pixels = int(np.count_nonzero(valid))
-
-        if valid_pixels > 0:
-            selected_percentage = (
-                100.0 * selected_pixels / valid_pixels
-            )
-        else:
-            selected_percentage = 0.0
 
         file_name = (
             self.current_path.name
@@ -281,13 +391,13 @@ class MainWindow(QMainWindow):
             else "Unknown"
         )
 
+        if selection_summaries:
+            selection_text = " | ".join(selection_summaries)
+        else:
+            selection_text = "No active selections"
+
         self.status_label.setText(
-            f"File: {file_name} | "
-            f"Selection center: "
-            f"g={center_g:.3f}, s={center_s:.3f} | "
-            f"Radius: {radius:.3f} | "
-            f"Selected pixels: {selected_pixels:,} "
-            f"({selected_percentage:.2f}%)"
+            f"File: {file_name} | {selection_text}"
         )
 
 
