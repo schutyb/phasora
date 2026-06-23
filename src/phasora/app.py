@@ -4,7 +4,8 @@ import sys
 from pathlib import Path
 
 import numpy as np
-from PySide6.QtCore import Qt
+import pyqtgraph as pg
+from PySide6.QtCore import QRectF
 from PySide6.QtWidgets import (
     QApplication,
     QFileDialog,
@@ -20,42 +21,57 @@ from phasora.core.io import load_tiff
 from phasora.core.phasor import compute_phasor
 
 
+pg.setConfigOptions(imageAxisOrder="row-major")
+
+
 class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
         self.setWindowTitle("Phasora")
-        self.resize(1000, 700)
-
-        self.title_label = QLabel("Phasora v0.1")
-        self.title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.title_label.setStyleSheet(
-            """
-            QLabel {
-                font-size: 32px;
-                font-weight: bold;
-            }
-            """
-        )
+        self.resize(1400, 850)
 
         self.open_button = QPushButton("Open TIFF")
-        self.open_button.setMinimumHeight(45)
+        self.open_button.setMinimumHeight(42)
         self.open_button.clicked.connect(self.open_tiff)
 
         self.status_label = QLabel(
             "Open a multichannel TIFF image to calculate its phasor."
         )
-        self.status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.status_label.setWordWrap(True)
 
+        self.graphics = pg.GraphicsLayoutWidget()
+
+        self.dc_plot = self.graphics.addPlot(
+            row=0,
+            col=0,
+            title="Intensity image (DC)",
+        )
+        self.dc_plot.setAspectLocked(True)
+        self.dc_plot.hideAxis("left")
+        self.dc_plot.hideAxis("bottom")
+
+        self.dc_image_item = pg.ImageItem()
+        self.dc_plot.addItem(self.dc_image_item)
+
+        self.phasor_plot = self.graphics.addPlot(
+            row=0,
+            col=1,
+            title="Phasor histogram",
+        )
+        self.phasor_plot.setAspectLocked(True)
+        self.phasor_plot.setLabel("bottom", "g")
+        self.phasor_plot.setLabel("left", "s")
+        self.phasor_plot.setXRange(-1.0, 1.0)
+        self.phasor_plot.setYRange(-1.0, 1.0)
+
+        self.phasor_image_item = pg.ImageItem()
+        self.phasor_plot.addItem(self.phasor_image_item)
+
         layout = QVBoxLayout()
-        layout.addStretch()
-        layout.addWidget(self.title_label)
-        layout.addSpacing(20)
         layout.addWidget(self.open_button)
-        layout.addSpacing(20)
         layout.addWidget(self.status_label)
-        layout.addStretch()
+        layout.addWidget(self.graphics, stretch=1)
 
         container = QWidget()
         container.setLayout(layout)
@@ -84,7 +100,9 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.show_image_summary(
+        self.update_dc_view(dc)
+        self.update_phasor_view(dc, g, s)
+        self.update_status(
             path=Path(file_name),
             image=image,
             dc=dc,
@@ -92,7 +110,72 @@ class MainWindow(QMainWindow):
             s=s,
         )
 
-    def show_image_summary(
+    def update_dc_view(self, dc: np.ndarray) -> None:
+        finite_values = dc[np.isfinite(dc)]
+
+        if finite_values.size == 0:
+            lower = 0.0
+            upper = 1.0
+        else:
+            lower, upper = np.percentile(finite_values, [1, 99])
+
+            if lower == upper:
+                upper = lower + 1.0
+
+        self.dc_image_item.setImage(
+            dc,
+            autoLevels=False,
+            levels=(float(lower), float(upper)),
+        )
+
+        height, width = dc.shape
+        self.dc_plot.setRange(
+            xRange=(0, width),
+            yRange=(0, height),
+            padding=0.02,
+        )
+
+    def update_phasor_view(
+        self,
+        dc: np.ndarray,
+        g: np.ndarray,
+        s: np.ndarray,
+    ) -> None:
+        valid = (
+            (dc > 0)
+            & np.isfinite(g)
+            & np.isfinite(s)
+            & (g >= -1.0)
+            & (g <= 1.0)
+            & (s >= -1.0)
+            & (s <= 1.0)
+        )
+
+        if not np.any(valid):
+            histogram = np.zeros((256, 256), dtype=np.float64)
+        else:
+            histogram, _, _ = np.histogram2d(
+                g[valid],
+                s[valid],
+                bins=256,
+                range=[[-1.0, 1.0], [-1.0, 1.0]],
+            )
+
+        log_histogram = np.log1p(histogram)
+
+        self.phasor_image_item.setImage(
+            log_histogram.T,
+            autoLevels=True,
+        )
+
+        self.phasor_image_item.setRect(
+            QRectF(-1.0, -1.0, 2.0, 2.0)
+        )
+
+        self.phasor_plot.setXRange(-1.0, 1.0, padding=0)
+        self.phasor_plot.setYRange(-1.0, 1.0, padding=0)
+
+    def update_status(
         self,
         path: Path,
         image: np.ndarray,
@@ -114,11 +197,10 @@ class MainWindow(QMainWindow):
         height, width, channels = image.shape
 
         summary = (
-            f"File: {path.name}\n"
-            f"Shape: {height} × {width} × {channels}\n"
-            f"Data type: {image.dtype}\n"
-            f"Mean DC: {mean_dc:.4f}\n"
-            f"Mean g: {mean_g:.4f}\n"
+            f"File: {path.name} | "
+            f"Shape: {height} × {width} × {channels} | "
+            f"Mean DC: {mean_dc:.4f} | "
+            f"Mean g: {mean_g:.4f} | "
             f"Mean s: {mean_s:.4f}"
         )
 
