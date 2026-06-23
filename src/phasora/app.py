@@ -28,20 +28,26 @@ class MainWindow(QMainWindow):
     def __init__(self) -> None:
         super().__init__()
 
+        self.current_path: Path | None = None
+        self.dc: np.ndarray | None = None
+        self.g: np.ndarray | None = None
+        self.s: np.ndarray | None = None
+
         self.setWindowTitle("Phasora")
-        self.resize(1400, 850)
+        self.resize(1450, 850)
 
         self.open_button = QPushButton("Open TIFF")
         self.open_button.setMinimumHeight(42)
         self.open_button.clicked.connect(self.open_tiff)
 
         self.status_label = QLabel(
-            "Open a multichannel TIFF image to calculate its phasor."
+            "Open a preprocessed multichannel TIFF image."
         )
         self.status_label.setWordWrap(True)
 
         self.graphics = pg.GraphicsLayoutWidget()
 
+        # Intensity panel
         self.dc_plot = self.graphics.addPlot(
             row=0,
             col=0,
@@ -54,6 +60,11 @@ class MainWindow(QMainWindow):
         self.dc_image_item = pg.ImageItem()
         self.dc_plot.addItem(self.dc_image_item)
 
+        # Transparent selection overlay
+        self.overlay_item = pg.ImageItem()
+        self.dc_plot.addItem(self.overlay_item)
+
+        # Phasor panel
         self.phasor_plot = self.graphics.addPlot(
             row=0,
             col=1,
@@ -67,6 +78,20 @@ class MainWindow(QMainWindow):
 
         self.phasor_image_item = pg.ImageItem()
         self.phasor_plot.addItem(self.phasor_image_item)
+
+        # Interactive circular selection
+        self.phasor_roi = pg.CircleROI(
+            pos=(-0.1, -0.1),
+            size=(0.2, 0.2),
+            movable=True,
+            resizable=True,
+            pen=pg.mkPen(width=2),
+        )
+        self.phasor_roi.setVisible(False)
+        self.phasor_roi.sigRegionChanged.connect(
+            self.update_selection
+        )
+        self.phasor_plot.addItem(self.phasor_roi)
 
         layout = QVBoxLayout()
         layout.addWidget(self.open_button)
@@ -100,65 +125,74 @@ class MainWindow(QMainWindow):
             )
             return
 
-        self.update_dc_view(dc)
-        self.update_phasor_view(dc, g, s)
-        self.update_status(
-            path=Path(file_name),
-            image=image,
-            dc=dc,
-            g=g,
-            s=s,
-        )
+        self.current_path = Path(file_name)
+        self.dc = dc
+        self.g = g
+        self.s = s
 
-    def update_dc_view(self, dc: np.ndarray) -> None:
-        finite_values = dc[np.isfinite(dc)]
+        self.update_dc_view()
+        self.update_phasor_view()
+
+        self.phasor_roi.setVisible(True)
+        self.update_selection()
+
+    def update_dc_view(self) -> None:
+        if self.dc is None:
+            return
+
+        finite_values = self.dc[np.isfinite(self.dc)]
 
         if finite_values.size == 0:
             lower = 0.0
             upper = 1.0
         else:
-            lower, upper = np.percentile(finite_values, [1, 99])
+            lower, upper = np.percentile(
+                finite_values,
+                [1, 99],
+            )
 
             if lower == upper:
                 upper = lower + 1.0
 
         self.dc_image_item.setImage(
-            dc,
+            self.dc,
             autoLevels=False,
             levels=(float(lower), float(upper)),
         )
 
-        height, width = dc.shape
+        height, width = self.dc.shape
+
         self.dc_plot.setRange(
             xRange=(0, width),
             yRange=(0, height),
             padding=0.02,
         )
 
-    def update_phasor_view(
-        self,
-        dc: np.ndarray,
-        g: np.ndarray,
-        s: np.ndarray,
-    ) -> None:
+    def update_phasor_view(self) -> None:
+        if self.dc is None or self.g is None or self.s is None:
+            return
+
         valid = (
-            (dc > 0)
-            & np.isfinite(g)
-            & np.isfinite(s)
-            & (g >= -1.0)
-            & (g <= 1.0)
-            & (s >= -1.0)
-            & (s <= 1.0)
+            (self.dc > 0)
+            & np.isfinite(self.g)
+            & np.isfinite(self.s)
+            & (self.g >= -1.0)
+            & (self.g <= 1.0)
+            & (self.s >= -1.0)
+            & (self.s <= 1.0)
         )
 
-        if not np.any(valid):
-            histogram = np.zeros((256, 256), dtype=np.float64)
-        else:
+        if np.any(valid):
             histogram, _, _ = np.histogram2d(
-                g[valid],
-                s[valid],
+                self.g[valid],
+                self.s[valid],
                 bins=256,
                 range=[[-1.0, 1.0], [-1.0, 1.0]],
+            )
+        else:
+            histogram = np.zeros(
+                (256, 256),
+                dtype=np.float64,
             )
 
         log_histogram = np.log1p(histogram)
@@ -172,39 +206,88 @@ class MainWindow(QMainWindow):
             QRectF(-1.0, -1.0, 2.0, 2.0)
         )
 
-        self.phasor_plot.setXRange(-1.0, 1.0, padding=0)
-        self.phasor_plot.setYRange(-1.0, 1.0, padding=0)
-
-    def update_status(
-        self,
-        path: Path,
-        image: np.ndarray,
-        dc: np.ndarray,
-        g: np.ndarray,
-        s: np.ndarray,
-    ) -> None:
-        nonzero_pixels = dc > 0
-
-        if np.any(nonzero_pixels):
-            mean_g = float(np.mean(g[nonzero_pixels]))
-            mean_s = float(np.mean(s[nonzero_pixels]))
-            mean_dc = float(np.mean(dc[nonzero_pixels]))
-        else:
-            mean_g = 0.0
-            mean_s = 0.0
-            mean_dc = 0.0
-
-        height, width, channels = image.shape
-
-        summary = (
-            f"File: {path.name} | "
-            f"Shape: {height} × {width} × {channels} | "
-            f"Mean DC: {mean_dc:.4f} | "
-            f"Mean g: {mean_g:.4f} | "
-            f"Mean s: {mean_s:.4f}"
+        self.phasor_plot.setXRange(
+            -1.0,
+            1.0,
+            padding=0,
+        )
+        self.phasor_plot.setYRange(
+            -1.0,
+            1.0,
+            padding=0,
         )
 
-        self.status_label.setText(summary)
+    def update_selection(self) -> None:
+        if self.dc is None or self.g is None or self.s is None:
+            return
+
+        roi_position = self.phasor_roi.pos()
+        roi_size = self.phasor_roi.size()
+
+        center_g = float(
+            roi_position.x() + roi_size.x() / 2.0
+        )
+        center_s = float(
+            roi_position.y() + roi_size.y() / 2.0
+        )
+        radius = float(
+            min(roi_size.x(), roi_size.y()) / 2.0
+        )
+
+        valid = (
+            (self.dc > 0)
+            & np.isfinite(self.g)
+            & np.isfinite(self.s)
+        )
+
+        distance_squared = (
+            (self.g - center_g) ** 2
+            + (self.s - center_s) ** 2
+        )
+
+        mask = valid & (
+            distance_squared <= radius**2
+        )
+
+        overlay = np.zeros(
+            (*mask.shape, 4),
+            dtype=np.uint8,
+        )
+
+        overlay[mask, 0] = 255
+        overlay[mask, 1] = 80
+        overlay[mask, 2] = 80
+        overlay[mask, 3] = 150
+
+        self.overlay_item.setImage(
+            overlay,
+            autoLevels=False,
+        )
+
+        selected_pixels = int(np.count_nonzero(mask))
+        valid_pixels = int(np.count_nonzero(valid))
+
+        if valid_pixels > 0:
+            selected_percentage = (
+                100.0 * selected_pixels / valid_pixels
+            )
+        else:
+            selected_percentage = 0.0
+
+        file_name = (
+            self.current_path.name
+            if self.current_path is not None
+            else "Unknown"
+        )
+
+        self.status_label.setText(
+            f"File: {file_name} | "
+            f"Selection center: "
+            f"g={center_g:.3f}, s={center_s:.3f} | "
+            f"Radius: {radius:.3f} | "
+            f"Selected pixels: {selected_pixels:,} "
+            f"({selected_percentage:.2f}%)"
+        )
 
 
 def main() -> int:
