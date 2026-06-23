@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/phasora/__init__.py
+src/phasora/app.py
+src/phasora.egg-info/PKG-INFO
+src/phasora.egg-info/SOURCES.txt
+src/phasora.egg-info/dependency_links.txt
+src/phasora.egg-info/entry_points.txt
+src/phasora.egg-info/requires.txt
+src/phasora.egg-info/top_level.txt
+src/phasora/core/__init__.py
+src/phasora/core/phasor.py
+src/phasora/gui/__init__.py
+tests/test_phasor.py

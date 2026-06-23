@@ -1,0 +1,2 @@
+[console_scripts]
+phasora = phasora.app:main
