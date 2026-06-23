@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
 from phasora.core.io import load_tiff
 from phasora.core.phasor import compute_phasor
 from phasora.core.selection import circular_phasor_mask
+from phasora.export.results import SelectionResult, export_selections
 
 
 pg.setConfigOptions(imageAxisOrder="row-major")
@@ -71,10 +72,16 @@ class MainWindow(QMainWindow):
             self.remove_last_selection
         )
 
+        self.export_button = QPushButton("Export selections")
+        self.export_button.setMinimumHeight(42)
+        self.export_button.setEnabled(False)
+        self.export_button.clicked.connect(self.export_current_selections)
+
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.open_button)
         button_layout.addWidget(self.add_selection_button)
         button_layout.addWidget(self.remove_selection_button)
+        button_layout.addWidget(self.export_button)
 
         self.status_label = QLabel(
             "Open a preprocessed multichannel TIFF image."
@@ -198,6 +205,8 @@ class MainWindow(QMainWindow):
 
         self.update_selection()
 
+        self.export_button.setEnabled(len(self.phasor_rois) > 0)
+
     def remove_last_selection(self) -> None:
         if not self.phasor_rois:
             return
@@ -211,6 +220,8 @@ class MainWindow(QMainWindow):
         self.add_selection_button.setEnabled(True)
 
         self.update_selection()
+
+        self.export_button.setEnabled(len(self.phasor_rois) > 0)
 
     def clear_selections(self) -> None:
         for roi in self.phasor_rois:
@@ -232,6 +243,93 @@ class MainWindow(QMainWindow):
                 empty_overlay,
                 autoLevels=False,
             )
+        self.export_button.setEnabled(False)
+    
+    def export_current_selections(self) -> None:
+        if self.dc is None or self.g is None or self.s is None:
+            QMessageBox.warning(
+                self,
+                "No image loaded",
+                "Open a TIFF image before exporting selections.",
+            )
+            return
+
+        if not self.phasor_rois:
+            QMessageBox.warning(
+                self,
+                "No selections",
+                "Add at least one phasor selection before exporting.",
+            )
+            return
+
+        output_directory = QFileDialog.getExistingDirectory(
+            self,
+            "Select export directory",
+            "",
+        )
+
+        if not output_directory:
+            return
+
+        valid = (
+            (self.dc > 0)
+            & np.isfinite(self.g)
+            & np.isfinite(self.s)
+        )
+
+        selections: list[SelectionResult] = []
+
+        for index, roi in enumerate(self.phasor_rois, start=1):
+            roi_position = roi.pos()
+            roi_size = roi.size()
+
+            center_g = float(
+                roi_position.x() + roi_size.x() / 2.0
+            )
+            center_s = float(
+                roi_position.y() + roi_size.y() / 2.0
+            )
+            radius = float(
+                min(roi_size.x(), roi_size.y()) / 2.0
+            )
+
+            mask = circular_phasor_mask(
+                g=self.g,
+                s=self.s,
+                center_g=center_g,
+                center_s=center_s,
+                radius=radius,
+                valid_mask=valid,
+            )
+
+            selections.append(
+                SelectionResult(
+                    index=index,
+                    center_g=center_g,
+                    center_s=center_s,
+                    radius=radius,
+                    mask=mask,
+                )
+            )
+
+        try:
+            export_selections(
+                output_directory=output_directory,
+                selections=selections,
+            )
+        except (ValueError, OSError) as error:
+            QMessageBox.critical(
+                self,
+                "Export failed",
+                str(error),
+            )
+            return
+
+        QMessageBox.information(
+            self,
+            "Export complete",
+            f"Selections were exported to:\n{output_directory}",
+        )
 
     def update_dc_view(self) -> None:
         if self.dc is None:
