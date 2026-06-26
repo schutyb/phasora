@@ -28,9 +28,6 @@ def circular_phasor_mask(
             raise ValueError("valid_mask must have the same shape as g and s")
         finite &= valid_mask
 
-    distance_squared = (
-        (g - center_g) ** 2
-        + (s - center_s) ** 2
-    )
+    distance_squared = (g - center_g) ** 2 + (s - center_s) ** 2
 
     return finite & (distance_squared <= radius**2)

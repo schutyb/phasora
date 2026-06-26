@@ -8,12 +8,15 @@ version = "0.1.0"
 description = "Interactive desktop application for phasor analysis"
 readme = "README.md"
 requires-python = ">=3.12"
+
 dependencies = [
     "numpy>=2.0",
     "pyside6>=6.8",
     "pyqtgraph>=0.13",
-    "tifffile>=2024.1",
+    "tifffile>=2026.5.2",
     "scikit-image>=0.24",
+    "phasorpy>=0.11",
+    "aicspylibczi>=3.3.1",
 ]
 
 [project.optional-dependencies]

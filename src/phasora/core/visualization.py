@@ -52,17 +52,10 @@ def compute_phasor_histogram(
 
     if valid_mask is not None:
         if valid_mask.shape != g.shape:
-            raise ValueError(
-                "valid_mask must have the same shape as g and s"
-            )
+            raise ValueError("valid_mask must have the same shape as g and s")
         valid &= valid_mask
 
-    valid &= (
-        (g >= x_range[0])
-        & (g <= x_range[1])
-        & (s >= y_range[0])
-        & (s <= y_range[1])
-    )
+    valid &= (g >= x_range[0]) & (g <= x_range[1]) & (s >= y_range[0]) & (s <= y_range[1])
 
     histogram, _, _ = np.histogram2d(
         g[valid],

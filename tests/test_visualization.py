@@ -10,18 +10,14 @@ from phasora.core.visualization import (
 
 
 def test_spectral_ranges_cover_full_phasor_plane() -> None:
-    x_range, y_range = phasor_plot_ranges(
-        PhasorMode.SPECTRAL
-    )
+    x_range, y_range = phasor_plot_ranges(PhasorMode.SPECTRAL)
 
     assert x_range == (-1.0, 1.0)
     assert y_range == (-1.0, 1.0)
 
 
 def test_lifetime_ranges_cover_universal_semicircle() -> None:
-    x_range, y_range = phasor_plot_ranges(
-        PhasorMode.LIFETIME
-    )
+    x_range, y_range = phasor_plot_ranges(PhasorMode.LIFETIME)
 
     assert x_range == (0.0, 1.0)
     assert y_range == (0.0, 0.55)

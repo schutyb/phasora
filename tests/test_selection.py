@@ -16,9 +16,7 @@ def test_circular_mask_selects_points_inside_radius() -> None:
         radius=0.5,
     )
 
-    expected = np.array(
-        [[True, True], [False, False]]
-    )
+    expected = np.array([[True, True], [False, False]])
 
     np.testing.assert_array_equal(mask, expected)
 
@@ -26,9 +24,7 @@ def test_circular_mask_selects_points_inside_radius() -> None:
 def test_valid_mask_is_applied() -> None:
     g = np.zeros((2, 2))
     s = np.zeros((2, 2))
-    valid = np.array(
-        [[True, False], [True, False]]
-    )
+    valid = np.array([[True, False], [True, False]])
 
     mask = circular_phasor_mask(
         g=g,
